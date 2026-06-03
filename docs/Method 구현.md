@@ -61,17 +61,11 @@ python generate_heatmaps.py \
 
 ### 2. 학습 실행
 ```bash
-# Ours (heatmap loss 적용)
-python train.py \
-    -s data/YOUR_SCENE \
-    -m output/ours_alpha5 \
-    --heatmap_dir data/YOUR_SCENE/heatmaps \
-    --heatmap_alpha 5.0
+# Ours: heatmaps/ 폴더가 있으면 자동 활성화
+python train.py -s data/YOUR_SCENE -m output/ours_alpha5 --heatmap_alpha 5.0
 
-# Baseline (heatmap_dir 미지정 → 일반 L1)
-python train.py \
-    -s data/YOUR_SCENE \
-    -m output/baseline
+# Baseline: heatmaps/ 폴더 없이 실행하면 일반 L1
+python train.py -s data/YOUR_SCENE -m output/baseline
 ```
 
 ---
@@ -85,15 +79,13 @@ python train.py \
 **변경 내용:**
 ```python
 # [IWAIT'26] Weather-aware Heatmap Loss 파라미터
-# heatmap_dir: generate_heatmaps.py 로 생성한 .npy 폴더 경로
-#              빈 문자열이면 heatmap loss 비활성화 → Baseline 재현 가능
+# heatmap_dir 는 source_path/heatmaps/ 로 자동 결정되므로 별도 인자 없음
 # heatmap_alpha: W_t = exp(-alpha * H_t) 의 감쇠 계수
-self.heatmap_dir = ""
 self.heatmap_alpha = 5.0
 ```
 
-**이유:** `ParamGroup`의 자동 파싱 구조를 활용해 CLI 인자(`--heatmap_dir`, `--heatmap_alpha`)로
-자동 등록. `heatmap_dir=""` 기본값으로 Baseline/Ours를 동일 코드에서 전환 가능.
+**이유:** `heatmap_dir`는 `source_path/heatmaps/` 존재 여부로 자동 결정되므로 CLI 인자 불필요.
+`--heatmap_alpha` 만 노출해 실험 편의성 유지.
 
 ---
 
@@ -113,18 +105,19 @@ from utils.heatmap_loss import HeatmapWeightedLoss  # [IWAIT'26] Weather-aware H
 
 ```python
 # [IWAIT'26] HeatmapWeightedLoss 초기화
-# opt.heatmap_dir 가 비어 있으면 enabled=False → 기존 l1_loss 와 동일하게 동작 (Baseline)
-# opt.heatmap_dir 가 지정되면 해당 폴더의 .npy 를 로드해 weighted loss 적용
+# source_path/heatmaps/ 가 존재하면 자동으로 활성화, 없으면 일반 L1 (Baseline)
+heatmap_dir = os.path.join(dataset.source_path, "heatmaps")
 heatmap_loss_fn = HeatmapWeightedLoss(
-    heatmap_dir=opt.heatmap_dir,
+    heatmap_dir=heatmap_dir,
     device=torch.device("cuda"),
-    enabled=bool(opt.heatmap_dir),
+    enabled=os.path.isdir(heatmap_dir),
     alpha=opt.heatmap_alpha,
 )
 ```
 
-**이유:** 학습 전체에서 단 한 번만 초기화. `.npy`는 `_cache` dict로 lazy-load되어
-메모리 효율 유지 (처음 접근 시에만 디스크 읽기).
+**이유:** `source_path/heatmaps/` 존재 여부만으로 Baseline/Ours 자동 전환.
+별도 인자 없이 데이터 준비 상태가 곧 실험 설정이 됨.
+`.npy`는 `_cache` dict로 lazy-load되어 메모리 효율 유지.
 
 ---
 
@@ -186,7 +179,7 @@ WeatherEdit(MWFormer) 환경에서 별도 실행.
 
 | 파라미터 | 기본값 | CLI | 설명 |
 |---------|--------|-----|------|
-| `heatmap_dir` | `""` | `--heatmap_dir` | 비어있으면 Baseline (일반 L1) |
+| `heatmap_dir` | `source_path/heatmaps/` | (자동) | 폴더 존재 여부로 활성화 자동 결정 |
 | `heatmap_alpha` | `5.0` | `--heatmap_alpha` | W_t = exp(-α·H_t) 감쇠 강도 |
 
 ---

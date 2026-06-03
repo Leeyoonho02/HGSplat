@@ -75,12 +75,12 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
     num_views = len(scene.getTrainCameras())
 
     # [IWAIT'26] HeatmapWeightedLoss 초기화
-    # opt.heatmap_dir 가 비어 있으면 enabled=False → 기존 l1_loss 와 동일하게 동작 (Baseline)
-    # opt.heatmap_dir 가 지정되면 해당 폴더의 .npy 를 로드해 weighted loss 적용
+    # source_path/heatmaps/ 가 존재하면 자동으로 활성화, 없으면 일반 L1 (Baseline)
+    heatmap_dir = os.path.join(dataset.source_path, "heatmaps")
     heatmap_loss_fn = HeatmapWeightedLoss(
-        heatmap_dir=opt.heatmap_dir,
+        heatmap_dir=heatmap_dir,
         device=torch.device("cuda"),
-        enabled=bool(opt.heatmap_dir),
+        enabled=os.path.isdir(heatmap_dir),
         alpha=opt.heatmap_alpha,
     )
     start_view_id = 0
