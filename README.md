@@ -55,6 +55,26 @@ pip install submodules/fused-ssim
 
 ---
 
+## 데이터셋 디렉토리 구조
+
+```
+data/
+└── YOUR_SCENE/
+    ├── images/               ← 입력 프레임 (필수)
+    │   ├── frame_00001.png
+    │   ├── frame_00002.png
+    │   └── ...
+    └── heatmaps/             ← Heatmap weight map (선택)
+        ├── frame_00001.npy   │  존재하면 → Ours (weighted loss) 자동 활성화
+        ├── frame_00002.npy   │  없으면   → Baseline (일반 L1)
+        └── ...
+```
+
+- `images/` 파일명과 `heatmaps/` 파일명은 **확장자를 제외하고 동일**해야 함
+- `heatmaps/*.npy` 는 `generate_heatmaps.py` 로 생성 (shape: `[H, W]`, dtype: `float32`, 값 범위: `(0, 1]`)
+
+---
+
 ## 사용법
 
 ### 1. Heatmap 사전 생성 (WeatherEdit/MWFormer 환경)
