@@ -41,7 +41,7 @@ $$\mathcal{L}_{photo} = \frac{\sum_p W_t(p) \cdot |I_t(p) - \hat{I}_t(p)|}{\sum_
 ## 설치
 
 ```bash
-git clone --recursive https://github.com/Leeyoonho02/IWAIT_26.git
+git clone --recursive https://github.com/Leeyoonho02/HGSplat.git
 cd IWAIT_26
 
 conda create -n iwait26 python=3.10.13 cmake=3.14.0 -y
