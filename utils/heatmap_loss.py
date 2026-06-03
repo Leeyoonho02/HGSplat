@@ -24,12 +24,17 @@ class HeatmapWeightedLoss:
     device : torch.device
     enabled : bool
         False이면 일반 L1 loss로 fallback (Baseline 재현용).
+    alpha : float
+        generate_heatmaps.py 의 --alpha 와 동일한 값을 사용할 것.
+        여기서는 .npy 에 이미 W_t = exp(-alpha*H_t) 가 저장되어 있으므로
+        실질적으로 사용되지 않으나, 로그 출력 및 향후 on-the-fly 계산 확장을 위해 보존.
     """
 
-    def __init__(self, heatmap_dir: str, device: torch.device, enabled: bool = True):
+    def __init__(self, heatmap_dir: str, device: torch.device, enabled: bool = True, alpha: float = 5.0):
         self.heatmap_dir = heatmap_dir
         self.device = device
         self.enabled = enabled
+        self.alpha = alpha
         self._cache: dict[str, torch.Tensor] = {}
 
         if enabled and not os.path.isdir(heatmap_dir):

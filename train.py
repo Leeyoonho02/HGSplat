@@ -21,6 +21,7 @@ os.system('echo $CUDA_VISIBLE_DEVICES')
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim, depth_loss
+from utils.heatmap_loss import HeatmapWeightedLoss  # [IWAIT'26] Weather-aware Heatmap Loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -68,10 +69,20 @@ def reprojection_error(params, points_3d, points_2d, K):
 
 def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank, 
+    gaussians = GaussianModel(dataset.feat_dim, dataset.n_offsets, dataset.voxel_size, dataset.update_depth, dataset.update_init_factor, dataset.update_hierachy_factor, dataset.use_feat_bank,
                               dataset.appearance_dim, dataset.ratio, dataset.add_opacity_dist, dataset.add_cov_dist, dataset.add_color_dist)
     scene = Scene(dataset, gaussians)
     num_views = len(scene.getTrainCameras())
+
+    # [IWAIT'26] HeatmapWeightedLoss 초기화
+    # opt.heatmap_dir 가 비어 있으면 enabled=False → 기존 l1_loss 와 동일하게 동작 (Baseline)
+    # opt.heatmap_dir 가 지정되면 해당 폴더의 .npy 를 로드해 weighted loss 적용
+    heatmap_loss_fn = HeatmapWeightedLoss(
+        heatmap_dir=opt.heatmap_dir,
+        device=torch.device("cuda"),
+        enabled=bool(opt.heatmap_dir),
+        alpha=opt.heatmap_alpha,
+    )
     start_view_id = 0
     end_view_id = 1
 
@@ -119,7 +130,9 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
         voxel_visible_mask = render_pkg["visible_mask"]
 
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
+        # [IWAIT'26] Init 루프: weather-aware weighted L1 loss
+        # heatmap_dir 미지정 시 내부적으로 일반 l1_loss 와 동일하게 동작
+        Ll1 = heatmap_loss_fn(image, gt_image, viewpoint_cam.image_name)
 
         if FUSED_SSIM_AVAILABLE:
             ssim_loss = (1 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
@@ -146,7 +159,7 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
             xy0, xy1, conf = xy0[mask], xy1[mask], conf[mask]
             loss_2d = ((xy0.detach() - xy1).abs() * conf[:, None]).mean()
             loss += loss_2d * opt.loss_2d_correspondence_weight
-        
+
         if opt.loss_2d_correspondence_weight > 0 and viewpoint_cam.uid < end_view_id - 2:
             view1 = viewpoint_cam
             view2 = scene.getTrainCameras()[viewpoint_cam.uid + 1]
@@ -347,7 +360,8 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
             rendered_depth = render_pkg["depth"][0]
 
             gt_image = viewpoint_cam.original_image.cuda()
-            Ll1 = l1_loss(image, gt_image)
+            # [IWAIT'26] Local 루프: weather-aware weighted L1 loss
+            Ll1 = heatmap_loss_fn(image, gt_image, viewpoint_cam.image_name)
 
             if FUSED_SSIM_AVAILABLE:
                 ssim_loss = (1 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
@@ -375,7 +389,7 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
                 xy0, xy1, conf = xy0[mask], xy1[mask], conf[mask]
                 loss_2d = ((xy0.detach() - xy1).abs() * conf[:, None]).mean()
                 loss += loss_2d * opt.loss_2d_correspondence_weight
-            
+
             if opt.loss_2d_correspondence_weight > 0 and viewpoint_cam.uid < end_view_id - 2:
                 view1 = viewpoint_cam
                 view2 = scene.getTrainCameras()[viewpoint_cam.uid + 1]
@@ -412,7 +426,7 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
                     del gaussians.offset_gradient_accum
                     del gaussians.offset_denom
                     torch.cuda.empty_cache()
-                    
+
                 # Optimizer step
                 if iteration < opt.iterations:
                     gaussians.optimizer.step()
@@ -420,7 +434,7 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
                     gaussians.pose_optimizer.step()
                     gaussians.pose_optimizer.zero_grad(set_to_none = True)
                     update_pose(viewpoint_cam)
-        
+
         opt.iterations = global_iter
         opt.update_until = global_iter
         gaussians.training_setup(opt)
@@ -458,7 +472,8 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
             rendered_depth = render_pkg["depth"][0]
             
             gt_image = viewpoint_cam.original_image.cuda()
-            Ll1 = l1_loss(image, gt_image)
+            # [IWAIT'26] Global 루프: weather-aware weighted L1 loss
+            Ll1 = heatmap_loss_fn(image, gt_image, viewpoint_cam.image_name)
 
             if FUSED_SSIM_AVAILABLE:
                 ssim_loss = (1 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))
@@ -486,7 +501,7 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
                 xy0, xy1, conf = xy0[mask], xy1[mask], conf[mask]
                 loss_2d = ((xy0.detach() - xy1).abs() * conf[:, None]).mean()
                 loss += loss_2d * opt.loss_2d_correspondence_weight
-            
+
             if opt.loss_2d_correspondence_weight > 0 and viewpoint_cam.uid < end_view_id - 2:
                 view1 = viewpoint_cam
                 view2 = scene.getTrainCameras()[viewpoint_cam.uid + 1]
@@ -499,7 +514,7 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
                 xy0, xy1, conf = xy0[mask], xy1[mask], conf[mask]
                 loss_2d_2 = ((xy0.detach() - xy1).abs() * conf[:, None]).mean()
                 loss += loss_2d_2 * opt.loss_2d_correspondence_weight
-            
+
             loss.backward()
 
             with torch.no_grad():
@@ -509,8 +524,8 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
                     progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                     progress_bar.update(10)
                 if iteration == opt.iterations:
-                    progress_bar.close()  
-                
+                    progress_bar.close()
+
                 # densification
                 if iteration < opt.update_until and iteration > opt.start_stat:
                     # add statis
@@ -523,7 +538,7 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
                     del gaussians.offset_gradient_accum
                     del gaussians.offset_denom
                     torch.cuda.empty_cache()
-                    
+
                 # Optimizer step
                 if iteration < opt.iterations:
                     gaussians.optimizer.step()
@@ -650,7 +665,8 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
         rendered_depth = render_pkg["depth"][0]
         
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
+        # [IWAIT'26] Refinement 루프: weather-aware weighted L1 loss
+        Ll1 = heatmap_loss_fn(image, gt_image, viewpoint_cam.image_name)
 
         if FUSED_SSIM_AVAILABLE:
             ssim_loss = (1 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))

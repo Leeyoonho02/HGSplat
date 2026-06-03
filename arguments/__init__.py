@@ -168,6 +168,13 @@ class OptimizationParams(ParamGroup):
         self.window_size = 5
         self.post_iter = 20000
 
+        # [IWAIT'26] Weather-aware Heatmap Loss 파라미터
+        # heatmap_dir: generate_heatmaps.py 로 생성한 .npy 폴더 경로
+        #              빈 문자열이면 heatmap loss 비활성화 → Baseline 재현 가능
+        # heatmap_alpha: W_t = exp(-alpha * H_t) 의 감쇠 계수
+        self.heatmap_dir = ""
+        self.heatmap_alpha = 5.0
+
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
