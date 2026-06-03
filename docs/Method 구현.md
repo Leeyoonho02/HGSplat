@@ -2,73 +2,6 @@ HGSplat / Method 구현 로그
 
 # Weather-aware Heatmap Loss — 구현 로드맵
 
----
-
-## 전체 파이프라인
-
-```
-[로컬 맥]  코드 작성 → GitHub push
-     │
-     ▼
-[Google Colab L4]
-  ├─ Step 0. HGSplat 레포 clone (MWFormer 내장)
-  ├─ Step 1. generate_heatmaps.py   → heatmaps/*.npy 생성
-  └─ Step 2. train.py (수정)        → weighted photometric loss 적용
-```
-
----
-
-## 파일 구조
-
-```
-HGSplat/
-├── train.py                   ← [수정] HeatmapWeightedLoss 적용
-├── arguments/__init__.py      ← [수정] --heatmap_alpha 파라미터 추가
-├── generate_heatmaps.py       ← [신규] MWFormer 기반 heatmap 전처리 스크립트
-├── mwformer/                  ← [신규] MWFormer 내장 패키지
-│   ├── __init__.py            ←   Network_top, StyleFilter_Top export
-│   ├── backbone.py            ←   복원 backbone (EncDec.py 기반)
-│   ├── style_filter.py        ←   날씨 style vector 추출 (style_filter64.py 기반)
-│   └── base_networks.py       ←   공용 레이어 + strip_prefix_if_present
-├── utils/heatmap_loss.py      ← [신규] HeatmapWeightedLoss 클래스
-└── IWAIT26_Colab.ipynb        ← Colab 실험 노트북
-```
-
----
-
-## Colab 세팅 순서
-
-### 0. 클론 및 환경 설치
-```bash
-git clone --recursive https://github.com/Leeyoonho02/HGSplat.git
-cd HGSplat
-pip install -r requirements.txt
-pip install submodules/simple-knn submodules/diff-gaussian-rasterization submodules/fused-ssim
-```
-
-### 1. Heatmap 생성
-```bash
-python generate_heatmaps.py \
-    --ckpt_backbone /path/to/backbone.pth \
-    --ckpt_style    /path/to/style_filter.pth \
-    --scene_dir     data/YOUR_SCENE/images \
-    --out_dir       data/YOUR_SCENE/heatmaps \
-    --alpha         5.0
-```
-
-### 2. 학습
-```bash
-# Ours: heatmaps/ 폴더 존재 시 자동 활성화
-python train.py -s data/YOUR_SCENE -m output/ours --heatmap_alpha 5.0
-
-# Baseline
-python train.py -s data/YOUR_SCENE -m output/baseline
-```
-
----
-
-## 코드 수정 상세 로그
-
 ### [v1] `arguments/__init__.py` — 파라미터 추가
 
 **위치:** `OptimizationParams.__init__()` 마지막 `super().__init__()` 직전
@@ -194,6 +127,56 @@ Section 3에서 `git clone taco-group/MWFormer` 셀 삭제.
 
 ---
 
+### [v3] `mwformer/style_filter.py` — StyleEncoder 버그 수정 + `encode_spatial()` 추가
+
+**버그:** `StyleEncoder.forward()`에서 stage 1 feature `x1` ([B, 64, H/4, W/4])를
+`patch_embed2` 호출이 덮어씌워 `return [x2, x1]`이 둘 다 128-dim을 반환하고 있었음.
+→ Gram matrix 크기가 `StyleFilter_conv1(2080)` 기대값과 불일치 → StyleFilter 자체가 오작동.
+
+**수정:** `x1_s1 = x1` 으로 stage 1 feature를 저장한 뒤 `return [x1_s1, x1]` 로 교체.
+
+**`encode_spatial()` 추가:** 체크포인트 1개(StyleFilter)만으로 공간 heatmap 생성.
+
+```python
+def encode_spatial(self, x):
+    enc_out = self.encoder(x)
+    # enc_out[0]: [1, 64,  H/4, W/4]  stage 1
+    # enc_out[1]: [1, 128, H/8, W/8]  stage 2
+
+    h1 = enc_out[0].norm(dim=1, keepdim=True)   # 채널 L2 norm
+    h2 = enc_out[1].norm(dim=1, keepdim=True)
+
+    h1 = F.interpolate(h1, size=(H, W), mode='bilinear', align_corners=False)
+    h2 = F.interpolate(h2, size=(H, W), mode='bilinear', align_corners=False)
+    heatmap = ((h1 + h2) / 2).squeeze()         # [H, W]
+
+    # min-max 정규화 → [0, 1]
+    heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-6)
+    return heatmap
+```
+
+**근거:** StyleFilter 인코더는 날씨 유형을 구분하도록 학습되었으므로,
+인코더 feature의 채널 활성화 강도가 날씨 아티팩트 위치와 상관관계를 가진다고 가정.
+Network_top(복원)의 잔차를 쓰는 방식보다 빠르고 체크포인트도 1개만 필요.
+
+---
+
+### [v3] `generate_heatmaps.py` — StyleFilter 단독 사용으로 교체
+
+**변경:**
+- `--ckpt_backbone`, `--ckpt_style` → `--ckpt_style` 하나로 단순화
+- `Network_top` import 및 로드 제거
+- `style_filter.module.encode_spatial(img_t)` 호출로 heatmap 생성
+
+---
+
+### [v3] README, Colab 노트북 업데이트
+
+- Drive 구조에서 `backbone.pth` 제거, `style_filter.pth` 하나만 표기
+- Colab Section 3: `CKPT_BACKBONE` 변수 제거, `--ckpt_style` 단일 인자로 교체
+
+---
+
 ## 하이퍼파라미터
 
 | 파라미터 | 기본값 | CLI | 설명 |
@@ -222,10 +205,11 @@ Section 3에서 `git clone taco-group/MWFormer` 셀 삭제.
 - [x] `arguments/__init__.py` — `heatmap_alpha` 추가
 - [x] `train.py` — import, 초기화, 4개 루프 `Ll1` 교체
 - [x] `utils/heatmap_loss.py` 작성
-- [x] `generate_heatmaps.py` 작성 (v1: WeatherEdit → v2: MWFormer 공식)
+- [x] `generate_heatmaps.py` 작성 (v1: WeatherEdit → v2: MWFormer 공식 → v3: StyleFilter 단독)
 - [x] `mwformer/` 패키지 내장 (backbone, style_filter, base_networks)
-- [x] Colab 노트북 작성 및 MWFormer 클론 셀 제거
-- [x] README 업데이트 (HGSplat 제목, mwformer 패키지 반영)
+- [x] `mwformer/style_filter.py` 버그 수정 + `encode_spatial()` 추가
+- [x] Colab 노트북 작성 및 체크포인트 단일화
+- [x] README 업데이트 (HGSplat 제목, 체크포인트 1개로 단순화)
 - [ ] Colab에서 체크포인트 확인 및 heatmap 생성 테스트
 - [ ] Baseline 실험 실행
 - [ ] Ours (α=5) 실험 실행

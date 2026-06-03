@@ -234,15 +234,19 @@ class StyleEncoder(nn.Module):
         for blk in self.block1:
             x1 = blk(x1, H1, W1)
         x1 = self.norm1(x1).reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
+        # [BUG FIX] patch_embed2 가 x1 을 덮어쓰므로 stage 1 feature 를 미리 저장
+        x1_s1 = x1                                                     # [B, 64, H/4, W/4]
         for blk in self.patch_block1:
             x2 = blk(x2, H2, W2)
         x2 = self.pnorm1(x2).reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
-        x1, H1, W1 = self.patch_embed2(x1)
+        x1, H1, W1 = self.patch_embed2(x1_s1)
         x1 = (x1.permute(0, 2, 1).reshape(B, ED[1], H1, W1) + x2).view(B, ED[1], -1).permute(0, 2, 1)
         for blk in self.block2:
             x1 = blk(x1, H1, W1)
         x1 = self.norm2(x1).reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        return [x2, x1]  # [stage1_feat, stage2_feat]
+        # x1_s1: [B, 64, H/4, W/4]  → gram 상삼각 2080 → StyleFilter_conv1(2080)
+        # x1:    [B, 128, H/8, W/8] → gram 상삼각 8256 → StyleFilter_res1(8256)
+        return [x1_s1, x1]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -276,3 +280,38 @@ class StyleFilter_Top(nn.Module):
         v1 = self.style_filter1(g1[:, idx1].view(b1, -1))
         v2 = self.style_filter2(g2[:, idx2].view(b2, -1))
         return self.layernorm(self.out1_fc(torch.cat([v1, v2], dim=1)))
+
+    def encode_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Network_top 없이 인코더 feature map 만으로 픽셀별 weather heatmap 생성.
+
+        인코더의 두 stage feature를 채널 L2 norm → 원본 해상도 업샘플 → 평균하여
+        날씨 아티팩트 강도의 공간적 분포를 추정한다.
+
+        Args:
+            x: [1, 3, H, W] 입력 이미지 (배치 크기 1 가정)
+
+        Returns:
+            heatmap: [H, W] float32 tensor, 값 범위 [0, 1]
+                     높을수록 날씨 아티팩트 영향이 강한 영역
+        """
+        _, _, H, W = x.shape
+        enc_out = self.encoder(x)
+        # enc_out[0]: [1, 64,  H/4, W/4]  — stage 1 (고해상도, 저수준 특징)
+        # enc_out[1]: [1, 128, H/8, W/8]  — stage 2 (저해상도, 고수준 특징)
+
+        # 채널 L2 norm → 각 위치의 feature 활성화 강도
+        h1 = enc_out[0].norm(dim=1, keepdim=True)   # [1, 1, H/4, W/4]
+        h2 = enc_out[1].norm(dim=1, keepdim=True)   # [1, 1, H/8, W/8]
+
+        # 원본 해상도로 업샘플 후 평균
+        h1 = F.interpolate(h1, size=(H, W), mode='bilinear', align_corners=False)
+        h2 = F.interpolate(h2, size=(H, W), mode='bilinear', align_corners=False)
+        heatmap = ((h1 + h2) / 2).squeeze()         # [H, W]
+
+        # min-max 정규화 → [0, 1]
+        h_min, h_max = heatmap.min(), heatmap.max()
+        if h_max - h_min > 1e-6:
+            heatmap = (heatmap - h_min) / (h_max - h_min)
+
+        return heatmap

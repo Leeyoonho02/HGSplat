@@ -87,15 +87,15 @@ data/
 
 ### 1. Heatmap 사전 생성
 
-MWFormer 체크포인트 2개 필요: `backbone.pth` (Network_top), `style_filter.pth` (StyleFilter_Top)
+MWFormer `StyleFilter` 체크포인트 하나만 필요 (`style_filter.pth`).  
+복원 backbone(Network_top) 없이 **인코더 feature map**에서 직접 공간 heatmap 생성.
 
 ```bash
 python generate_heatmaps.py \
-    --ckpt_backbone /path/to/backbone.pth \
-    --ckpt_style    /path/to/style_filter.pth \
-    --scene_dir     data/YOUR_SCENE/images \
-    --out_dir       data/YOUR_SCENE/heatmaps \
-    --alpha         5.0
+    --ckpt_style  /path/to/style_filter.pth \
+    --scene_dir   data/YOUR_SCENE/images \
+    --out_dir     data/YOUR_SCENE/heatmaps \
+    --alpha       5.0
 ```
 
 ### 2. 학습
