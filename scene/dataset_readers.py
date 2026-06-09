@@ -592,9 +592,14 @@ def readCustomSceneInfo(path, images, eval, llffhold=8):
 
 import gzip
 from collections import defaultdict, OrderedDict
-from pytorch3d.renderer import PerspectiveCameras
-from pytorch3d.utils import opencv_from_cameras_projection
 import torch
+
+try:
+    from pytorch3d.renderer import PerspectiveCameras
+    from pytorch3d.utils import opencv_from_cameras_projection
+except ImportError:
+    PerspectiveCameras = None
+    opencv_from_cameras_projection = None
 
 def load_camera(data, scale=1.0):
     """

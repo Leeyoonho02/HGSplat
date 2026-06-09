@@ -23,4 +23,5 @@ plyfile
 torch_scatter
 torchmetrics
 py3-wget
-git+https://github.com/facebookresearch/pytorch3d.git@stable
+# pytorch3d: CO3D 데이터셋 사용 시에만 필요. 소스 빌드 오래 걸리므로 기본 제외.
+# git+https://github.com/facebookresearch/pytorch3d.git@stable
