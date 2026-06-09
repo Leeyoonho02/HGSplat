@@ -1,5 +1,5 @@
-torch
-torchvision
+# torch / torchvision: Colab에 이미 설치되어 있으므로 제외 (재설치 시 수 GB 다운로드 발생)
+# torch_scatter: Colab 노트북에서 별도 설치 필요 (CUDA 버전 맞는 wheel 직접 지정)
 roma
 evo
 gradio
@@ -18,9 +18,7 @@ cython
 icecream
 jaxtyping
 laspy
-einops
 plyfile
-torch_scatter
 torchmetrics
 py3-wget
 # pytorch3d: CO3D 데이터셋 사용 시에만 필요. 소스 빌드 오래 걸리므로 기본 제외.
