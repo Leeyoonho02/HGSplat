@@ -7,6 +7,7 @@ from functools import partial
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 
@@ -259,7 +260,7 @@ class StyleFilter_Top(nn.Module):
     def __init__(self):
         super().__init__()
         self.encoder       = StyleEncoder(
-            patch_size=4, embed_dims=[64, 128], num_heads=[1, 2],
+            embed_dims=[64, 128], num_heads=[1, 2],
             mlp_ratios=[2, 2], qkv_bias=True,
             norm_layer=partial(nn.LayerNorm, eps=1e-6),
             depths=[2, 2], sr_ratios=[4, 2],
