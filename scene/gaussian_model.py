@@ -9,7 +9,11 @@
 import torch
 from functools import reduce
 import numpy as np
-from torch_scatter import scatter_max
+def scatter_max(src, index, dim):
+    num_groups = int(index.max().item()) + 1
+    out = torch.full((num_groups, src.size(1)), float('-inf'), device=src.device, dtype=src.dtype)
+    out.scatter_reduce_(0, index, src, reduce='amax')
+    return out, None
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func
 from torch import nn
 import os
