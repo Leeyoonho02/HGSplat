@@ -35,7 +35,8 @@ class HeatmapWeightedLoss:
         self.device = device
         self.enabled = enabled
         self.alpha = alpha
-        self._cache: dict[str, torch.Tensor] = {}
+        self._cache: dict[str, torch.Tensor] = {}        # 원본 해상도
+        self._cache_resized: dict[tuple, torch.Tensor] = {}  # (image_name, h, w) 키
 
         if enabled and not os.path.isdir(heatmap_dir):
             raise FileNotFoundError(
@@ -102,11 +103,14 @@ class HeatmapWeightedLoss:
 
         weight = self._load_weight(image_name)
         if weight is None:
-            # heatmap 없으면 일반 L1
             return diff.mean()
 
-        if weight.shape != diff.shape[-2:]:
-            weight = self._resize_weight(weight, diff)
+        _, h, w = diff.shape
+        if weight.shape != (h, w):
+            cache_key = (image_name, h, w)
+            if cache_key not in self._cache_resized:
+                self._cache_resized[cache_key] = self._resize_weight(weight, diff)
+            weight = self._cache_resized[cache_key]
 
         # weight: [H, W] → [1, H, W] broadcast
         w = weight.unsqueeze(0)
