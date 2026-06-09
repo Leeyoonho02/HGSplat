@@ -91,9 +91,14 @@ def main():
     print(f"[info] {len(img_files)}개 이미지 처리 시작")
 
     for fname in img_files:
+        stem   = os.path.splitext(fname)[0]
         img_t  = load_image(os.path.join(args.scene_dir, fname))
         w_map  = compute_weight_map(style_filter, img_t, device, args.alpha)
-        np.save(os.path.join(out_dir, os.path.splitext(fname)[0] + ".npy"), w_map)
+        np.save(os.path.join(out_dir, stem + ".npy"), w_map)
+
+        # PNG 시각화: weight map (0~1] → grayscale (0=날씨 픽셀, 255=정상)
+        png = Image.fromarray((w_map * 255).clip(0, 255).astype(np.uint8), mode="L")
+        png.save(os.path.join(out_dir, stem + ".png"))
 
     print(f"[done] {len(img_files)}개 weight map 저장 완료 → {out_dir}")
 
