@@ -290,7 +290,6 @@ class Attention_dec(nn.Module):
                             .reshape(B, C, -1).permute(0, 2, 1))
         kv = self.kv(src).reshape(B, -1, 2, nh, hd).permute(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]
-        q = torch.nn.functional.interpolate(q, size=(v.shape[2], v.shape[3]))
         attn = self.attn_drop((q @ k.transpose(-2, -1)) * self.scale).softmax(dim=-1)
         x = self.proj_drop(self.proj((attn @ v).transpose(1, 2).reshape(B, task_q.shape[1], C)))
         return x
