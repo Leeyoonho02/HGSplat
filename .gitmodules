@@ -10,6 +10,3 @@
 [submodule "submodules/mast3r"]
 	path = submodules/mast3r
 	url = https://github.com/naver/mast3r.git
-[submodule "submodules/MWFormer"]
-	path = submodules/MWFormer
-	url = https://github.com/taco-group/MWFormer
