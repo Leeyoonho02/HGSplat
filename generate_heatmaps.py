@@ -71,9 +71,18 @@ def compute_heatmap(style_filter, backbone, img_t: torch.Tensor,
     weight_map : (H, W) float32 (0, 1]  — loss 가중치
     """
     img_t = img_t.to(device)
+    _, _, H, W = img_t.shape
+    # MWFormer 디코더는 입력 크기가 stride 배수여야 함 — 32 단위로 패딩
+    STRIDE = 32
+    pad_h = (STRIDE - H % STRIDE) % STRIDE
+    pad_w = (STRIDE - W % STRIDE) % STRIDE
+    if pad_h > 0 or pad_w > 0:
+        img_padded = torch.nn.functional.pad(img_t, (0, pad_w, 0, pad_h), mode='reflect')
+    else:
+        img_padded = img_t
     with torch.no_grad():
-        feature_vec = style_filter(img_t)
-        restored    = backbone(img_t, feature_vec).clamp(0, 1)
+        feature_vec = style_filter(img_padded)
+        restored    = backbone(img_padded, feature_vec)[..., :H, :W].clamp(0, 1)
 
     residual = (img_t - restored).abs()           # [1, 3, H, W]
     heatmap  = residual.mean(dim=1).squeeze(0)    # [H, W]
