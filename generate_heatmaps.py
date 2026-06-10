@@ -49,7 +49,12 @@ def load_models(ckpt_style: str, ckpt_backbone: str,
 
     # Network_top (복원 backbone)
     backbone = nn.DataParallel(Network_top().to(device))
-    backbone.load_state_dict(torch.load(ckpt_backbone, map_location=device))
+    ckpt = torch.load(ckpt_backbone, map_location=device)
+    result = backbone.load_state_dict(ckpt, strict=False)
+    if result.missing_keys:
+        print(f"[warn] missing keys ({len(result.missing_keys)}): {result.missing_keys[:5]}")
+    if result.unexpected_keys:
+        print(f"[warn] unexpected keys ({len(result.unexpected_keys)}): {result.unexpected_keys[:5]}")
     backbone.eval()
     for p in backbone.parameters():
         p.requires_grad = False
