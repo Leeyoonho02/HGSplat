@@ -1,27 +1,33 @@
 """
 generate_heatmaps.py
 ────────────────────
-MWFormer 복원 결과와 원본 이미지의 residual로 weather heatmap 생성.
+MWFormer 공식 코드로 복원 이미지를 생성하고, residual로 weather heatmap을 한 번에 만듦.
 
-MWFormer 공식 코드로 복원 이미지를 먼저 생성한 뒤 이 스크립트를 실행:
-  H_t    = mean(|I - restored|, dim=channel)   ← 날씨 픽셀에서 residual이 큼
-  H_t    = min-max 정규화 → [0, 1]
-  W_t    = exp(-alpha * H_t)                   ← photometric loss 가중치
+  restored = MWFormer(I)
+  H_t      = mean(|I - restored|, dim=channel)   ← min-max 정규화 → [0, 1]
+  W_t      = exp(-alpha * H_t)                   ← photometric loss 가중치
 
-Colab 워크플로우:
-  1. MWFormer 공식 inference 실행 → restored/ 폴더에 저장
-  2. python generate_heatmaps.py \\
-         --input_dir   data/snow_scene/images    \\
-         --restored_dir data/snow_scene/restored \\
-         --out_dir     data/snow_scene/heatmaps  \\
-         --alpha       5.0
+사전 조건:
+  Colab 셀에서 MWFormer 레포 클론:
+    !git clone https://github.com/taco-group/MWFormer /content/MWFormer
+
+사용법:
+    python generate_heatmaps.py \\
+        --mwformer_dir  /content/MWFormer                        \\
+        --ckpt_style    /path/to/MWFormer_real/style_filter      \\
+        --ckpt_backbone /path/to/MWFormer_real/backbone          \\
+        --input_dir     data/snow_scene/images                   \\
+        --out_dir       data/snow_scene/heatmaps                 \\
+        --alpha         5.0
 """
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import torch
+import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
 
@@ -29,27 +35,48 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
 to_tensor = transforms.ToTensor()
 
 
-def compute_heatmap(img_t: torch.Tensor, restored_t: torch.Tensor,
-                    alpha: float) -> tuple:
-    """
-    Parameters
-    ----------
-    img_t      : [1, 3, H, W] float32 [0, 1]  — 원본 (날씨 포함)
-    restored_t : [1, 3, H, W] float32 [0, 1]  — MWFormer 복원 이미지
-    alpha      : W_t = exp(-alpha * H_t)
+def load_models(mwformer_dir: str, ckpt_style: str, ckpt_backbone: str,
+                device: torch.device):
+    """MWFormer 공식 모델 클래스를 import하고 체크포인트 로드."""
+    if mwformer_dir not in sys.path:
+        sys.path.insert(0, mwformer_dir)
 
+    from model.EncDec import Network_top
+    from model.style_filter64 import StyleFilter_Top
+
+    style_filter = nn.DataParallel(StyleFilter_Top().to(device))
+    style_filter.load_state_dict(
+        torch.load(ckpt_style, map_location=device), strict=True)
+    style_filter.eval()
+    for p in style_filter.parameters():
+        p.requires_grad = False
+
+    backbone = nn.DataParallel(Network_top().to(device))
+    backbone.load_state_dict(
+        torch.load(ckpt_backbone, map_location=device), strict=True)
+    backbone.eval()
+    for p in backbone.parameters():
+        p.requires_grad = False
+
+    print("[model] MWFormer (StyleFilter + Network_top) 로드 완료")
+    return style_filter, backbone
+
+
+def compute_heatmap(style_filter, backbone, img_t: torch.Tensor,
+                    alpha: float, device: torch.device) -> tuple:
+    """
     Returns
     -------
-    heatmap_np : (H, W) float32 [0, 1]  — 시각화용 (밝을수록 날씨 픽셀)
-    weight_map : (H, W) float32 (0, 1]  — loss 가중치용
+    heatmap_np : (H, W) float32 [0, 1]  — 시각화 (밝을수록 날씨 픽셀)
+    weight_map : (H, W) float32 (0, 1]  — loss 가중치
     """
-    # 해상도 불일치 시 restored를 원본 크기로 맞춤
-    if img_t.shape != restored_t.shape:
-        restored_t = torch.nn.functional.interpolate(
-            restored_t, size=img_t.shape[2:], mode="bilinear", align_corners=False)
+    img_t = img_t.to(device)
+    with torch.no_grad():
+        feature_vec = style_filter(img_t)
+        restored    = backbone(img_t, feature_vec).clamp(0, 1)
 
-    residual = (img_t - restored_t).abs()          # [1, 3, H, W]
-    heatmap  = residual.mean(dim=1).squeeze(0)     # [H, W]
+    residual = (img_t - restored).abs()           # [1, 3, H, W]
+    heatmap  = residual.mean(dim=1).squeeze(0)    # [H, W]
 
     h_min, h_max = heatmap.min(), heatmap.max()
     if h_max - h_min > 1e-6:
@@ -62,42 +89,44 @@ def compute_heatmap(img_t: torch.Tensor, restored_t: torch.Tensor,
     return heatmap_np, weight_map
 
 
-def find_pair(name: str, restored_dir: str) -> str:
-    """stem 이름으로 복원 이미지 파일 탐색 (확장자 무관)."""
-    for ext in IMG_EXTS:
-        path = os.path.join(restored_dir, name + ext)
-        if os.path.exists(path):
-            return path
-    raise FileNotFoundError(
-        f"복원 이미지를 찾을 수 없음: {restored_dir}/{name}.*")
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir",    required=True, help="원본 이미지 폴더")
-    parser.add_argument("--restored_dir", required=True, help="MWFormer 복원 이미지 폴더")
-    parser.add_argument("--out_dir",      default=None,  help="출력 폴더 (기본: input_dir/../heatmaps)")
-    parser.add_argument("--alpha",        type=float, default=5.0,
+    parser.add_argument("--mwformer_dir",  default="/content/MWFormer",
+                        help="taco-group/MWFormer 클론 경로")
+    parser.add_argument("--ckpt_style",    required=True,
+                        help="StyleFilter 체크포인트")
+    parser.add_argument("--ckpt_backbone", required=True,
+                        help="Network_top 체크포인트")
+    parser.add_argument("--input_dir",     required=True,
+                        help="원본 이미지 폴더")
+    parser.add_argument("--out_dir",       default=None,
+                        help="출력 폴더 (기본: input_dir/../heatmaps)")
+    parser.add_argument("--alpha",         type=float, default=5.0,
                         help="W_t = exp(-alpha * H_t)")
+    parser.add_argument("--device",        default="cuda")
     args = parser.parse_args()
 
     out_dir = args.out_dir or os.path.join(
         os.path.dirname(args.input_dir), "heatmaps")
     os.makedirs(out_dir, exist_ok=True)
 
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    print(f"[device] {device}")
+
+    style_filter, backbone = load_models(
+        args.mwformer_dir, args.ckpt_style, args.ckpt_backbone, device)
+
     img_files = sorted(f for f in os.listdir(args.input_dir)
                        if os.path.splitext(f)[1].lower() in IMG_EXTS)
     print(f"[info] {len(img_files)}개 이미지 처리 시작 (alpha={args.alpha})")
 
     for fname in img_files:
-        stem = os.path.splitext(fname)[0]
-
-        img_t      = to_tensor(Image.open(
+        stem  = os.path.splitext(fname)[0]
+        img_t = to_tensor(Image.open(
             os.path.join(args.input_dir, fname)).convert("RGB")).unsqueeze(0)
-        restored_t = to_tensor(Image.open(
-            find_pair(stem, args.restored_dir)).convert("RGB")).unsqueeze(0)
 
-        heatmap_np, weight_map = compute_heatmap(img_t, restored_t, args.alpha)
+        heatmap_np, weight_map = compute_heatmap(
+            style_filter, backbone, img_t, args.alpha, device)
 
         np.save(os.path.join(out_dir, stem + ".npy"), weight_map)
 
