@@ -9,17 +9,15 @@ Rule-based weather heatmap 생성 (외부 모델 불필요).
 
 Heatmap 계산:
   1. luminance  = 0.299R + 0.587G + 0.114B
-  2. DoG        = GaussianBlur(σ_small) - GaussianBlur(σ_large)  → 작은 blob 감지
-  3. H_t        = luminance_mask * relu(DoG)  → min-max 정규화 → [0, 1]
-  4. W_t        = exp(-alpha * H_t)           → photometric loss 가중치
+  2. H_t        = relu(lum - GaussianBlur(lum, σ_large))  → 배경보다 밝은 픽셀
+  3. H_t        = min-max 정규화 → [0, 1]
+  4. W_t        = exp(-alpha * H_t)
 
 사용법:
     python generate_heatmaps.py \\
         --scene_dir  data/YOUR_SCENE/images \\
         --out_dir    data/YOUR_SCENE/heatmaps \\
-        --sigma_s    1.0   \\
-        --sigma_l    5.0   \\
-        --bright_thr 0.6   \\
+        --sigma_l    15.0  \\
         --alpha      5.0
 """
 
@@ -59,44 +57,32 @@ def gaussian_blur(img: torch.Tensor, sigma: float) -> torch.Tensor:
     return x
 
 
-def compute_heatmap(img_t: torch.Tensor, sigma_s: float, sigma_l: float,
-                    bright_thr: float, alpha: float,
-                    device: torch.device) -> tuple:
+def compute_heatmap(img_t: torch.Tensor, sigma_l: float,
+                    alpha: float, device: torch.device) -> tuple:
     """
-    Rule-based snow/rain heatmap.
+    Rule-based snow/rain heatmap (로컬 대비 기반).
+
+    눈/비 입자는 절대적으로 밝지 않아도 주변 배경보다 밝음.
+    H_t = relu(lum - GaussianBlur(lum, σ_large)) 로 배경 대비 밝은 픽셀 감지.
 
     Parameters
     ----------
-    img_t     : [1, 3, H, W] float32 [0, 1]
-    sigma_s   : DoG small sigma (작은 blob 내부)
-    sigma_l   : DoG large sigma (배경 추정)
-    bright_thr: luminance 임계값 (0~1), 이 이상만 날씨 픽셀로 간주
-    alpha     : W_t = exp(-alpha * H_t)
-
-    Returns
-    -------
-    heatmap_np : (H, W) float32 [0, 1]  — 시각화용 (밝을수록 날씨 픽셀)
-    weight_map : (H, W) float32 (0, 1]  — loss 가중치용
+    img_t  : [1, 3, H, W] float32 [0, 1]
+    sigma_l: 배경 추정용 blur sigma (클수록 넓은 영역 평균과 비교)
+    alpha  : W_t = exp(-alpha * H_t)
     """
     img_t = img_t.to(device)
 
     # 1. Luminance [1, 1, H, W]
-    weights = torch.tensor([0.299, 0.587, 0.114],
-                            device=device).view(1, 3, 1, 1)
-    lum = (img_t * weights).sum(dim=1, keepdim=True)  # [1, 1, H, W]
+    lum_w = torch.tensor([0.299, 0.587, 0.114],
+                          device=device).view(1, 3, 1, 1)
+    lum = (img_t * lum_w).sum(dim=1, keepdim=True)
 
-    # 2. DoG: 작은 blob → 양수, 배경 구조 → 0 근처
-    blur_s = gaussian_blur(lum, sigma_s)
-    blur_l = gaussian_blur(lum, sigma_l)
-    dog = (blur_s - blur_l).clamp(min=0)               # relu(DoG)
+    # 2. 로컬 대비: 픽셀 - 배경 평균 → 주변보다 밝은 픽셀만 양수
+    background = gaussian_blur(lum, sigma_l)
+    heatmap = (lum - background).clamp(min=0).squeeze()  # [H, W]
 
-    # 3. 고밝기 마스크
-    bright_mask = (lum >= bright_thr).float()
-
-    # 4. 결합
-    heatmap = (dog * bright_mask).squeeze()             # [H, W]
-
-    # 5. min-max 정규화
+    # 3. min-max 정규화
     h_min, h_max = heatmap.min(), heatmap.max()
     if h_max - h_min > 1e-6:
         heatmap = (heatmap - h_min) / (h_max - h_min)
@@ -112,9 +98,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--scene_dir",  required=True,  help="입력 이미지 폴더")
     parser.add_argument("--out_dir",    default=None,   help="출력 폴더 (기본: scene_dir/../heatmaps)")
-    parser.add_argument("--sigma_s",    type=float, default=1.0,  help="DoG small sigma")
-    parser.add_argument("--sigma_l",    type=float, default=5.0,  help="DoG large sigma")
-    parser.add_argument("--bright_thr", type=float, default=0.6,  help="luminance 임계값 [0~1]")
+    parser.add_argument("--sigma_l",    type=float, default=15.0, help="배경 추정 blur sigma (클수록 더 넓은 배경과 비교)")
     parser.add_argument("--alpha",      type=float, default=5.0,  help="W_t = exp(-alpha * H_t)")
     parser.add_argument("--device",     default="cuda")
     args = parser.parse_args()
@@ -124,8 +108,7 @@ def main():
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"[device] {device}")
-    print(f"[params] sigma_s={args.sigma_s}, sigma_l={args.sigma_l}, "
-          f"bright_thr={args.bright_thr}, alpha={args.alpha}")
+    print(f"[params] sigma_l={args.sigma_l}, alpha={args.alpha}")
 
     img_files = sorted(f for f in os.listdir(args.scene_dir)
                        if os.path.splitext(f)[1].lower() in IMG_EXTS)
@@ -137,8 +120,7 @@ def main():
             os.path.join(args.scene_dir, fname)).convert("RGB")).unsqueeze(0)
 
         heatmap_np, weight_map = compute_heatmap(
-            img_t, args.sigma_s, args.sigma_l,
-            args.bright_thr, args.alpha, device)
+            img_t, args.sigma_l, args.alpha, device)
 
         np.save(os.path.join(out_dir, stem + ".npy"), weight_map)
 
