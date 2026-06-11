@@ -25,9 +25,10 @@ class HeatmapWeightedLoss:
     enabled : bool
         False이면 일반 L1 loss로 fallback (Baseline 재현용).
     alpha : float
-        generate_heatmaps.py 의 --alpha 와 동일한 값을 사용할 것.
-        여기서는 .npy 에 이미 W_t = exp(-alpha*H_t) 가 저장되어 있으므로
-        실질적으로 사용되지 않으나, 로그 출력 및 향후 on-the-fly 계산 확장을 위해 보존.
+        W_t = exp(-alpha * H_t) 의 감쇠 계수.
+        .npy 에는 raw heatmap H_t 가 저장되어 있으며, weight map W_t 는
+        로드 시점에 이 alpha 로 계산된다. 따라서 --heatmap_alpha 만 바꾸면
+        heatmap 재생성 없이 alpha ablation 이 가능하다.
     """
 
     def __init__(self, heatmap_dir: str, device: torch.device, enabled: bool = True, alpha: float = 5.0,
@@ -52,7 +53,7 @@ class HeatmapWeightedLoss:
     # ──────────────────────────────────
 
     def _load_weight(self, image_name: str) -> torch.Tensor | None:
-        """image_name(확장자 제외)에 대응하는 weight map을 반환."""
+        """image_name(확장자 제외)에 대응하는 weight map W=exp(-alpha*H)를 반환."""
         if not self.enabled:
             return None
 
@@ -63,7 +64,8 @@ class HeatmapWeightedLoss:
         if not os.path.exists(npy_path):
             return None
 
-        w = torch.from_numpy(np.load(npy_path)).to(self.device)  # [H, W]
+        h = torch.from_numpy(np.load(npy_path)).to(self.device)  # [H, W] raw heatmap
+        w = torch.exp(-self.alpha * h)                           # [H, W] weight map
         self._cache[image_name] = w
         return w
 
