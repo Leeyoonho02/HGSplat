@@ -30,13 +30,16 @@ class HeatmapWeightedLoss:
         실질적으로 사용되지 않으나, 로그 출력 및 향후 on-the-fly 계산 확장을 위해 보존.
     """
 
-    def __init__(self, heatmap_dir: str, device: torch.device, enabled: bool = True, alpha: float = 5.0):
+    def __init__(self, heatmap_dir: str, device: torch.device, enabled: bool = True, alpha: float = 5.0,
+                 log_interval: int = 100):
         self.heatmap_dir = heatmap_dir
         self.device = device
         self.enabled = enabled
         self.alpha = alpha
+        self.log_interval = log_interval
         self._cache: dict[str, torch.Tensor] = {}        # 원본 해상도
         self._cache_resized: dict[tuple, torch.Tensor] = {}  # (image_name, h, w) 키
+        self._call_count = 0
 
         if enabled and not os.path.isdir(heatmap_dir):
             raise FileNotFoundError(
@@ -99,10 +102,14 @@ class HeatmapWeightedLoss:
         -------
         loss : scalar tensor
         """
+        self._call_count += 1
         diff = (render - gt).abs()  # [C, H, W]
 
         weight = self._load_weight(image_name)
         if weight is None:
+            if self._call_count % self.log_interval == 1:
+                plain = diff.mean().item()
+                print(f"[HeatmapLoss iter={self._call_count}] mode=BASELINE  L1={plain:.6f}")
             return diff.mean()
 
         _, h, w = diff.shape
@@ -113,5 +120,13 @@ class HeatmapWeightedLoss:
             weight = self._cache_resized[cache_key]
 
         # weight: [H, W] → [1, H, W] broadcast
-        w = weight.unsqueeze(0)
-        return (diff * w).sum() / (w.sum() * diff.shape[0] + 1e-8)
+        wmap = weight.unsqueeze(0)
+        weighted_loss = (diff * wmap).sum() / (wmap.sum() * diff.shape[0] + 1e-8)
+
+        if self._call_count % self.log_interval == 1:
+            plain = diff.mean().item()
+            print(f"[HeatmapLoss iter={self._call_count}] mode=OURS  "
+                  f"L1_weighted={weighted_loss.item():.6f}  L1_plain={plain:.6f}  "
+                  f"weight_mean={weight.mean().item():.4f}  weight_min={weight.min().item():.4f}")
+
+        return weighted_loss
