@@ -27,6 +27,7 @@ import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
+from datetime import datetime
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
@@ -751,7 +752,10 @@ def prepare_output_and_logger(args):
         else:
             unique_str = str(uuid.uuid4())
         args.model_path = os.path.join("./output/", unique_str[0:10])
-        
+
+    # [IWAIT'26] 실행 시각(_YYMMDD_HHMMSS)을 폴더명 뒤에 붙여 재실행 시 덮어쓰기 방지
+    args.model_path = f"{args.model_path}_{datetime.now().strftime('%y%m%d_%H%M%S')}"
+
     # Set up output folder
     print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
