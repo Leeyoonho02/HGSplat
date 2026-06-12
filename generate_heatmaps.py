@@ -80,12 +80,15 @@ def resize_like_notebook(img: Image.Image) -> Image.Image:
 
 
 @torch.no_grad()
-def compute_heatmap(style_filter, net, img_pil: Image.Image, device):
+def compute_heatmap(style_filter, net, img_pil: Image.Image, device, thresh=0.1):
     """
     Returns
     -------
     heatmap_raw : (H, W) float32 [0,1]  raw residual (npy 저장용)
     heatmap_vis : (H, W) float32 [0,1]  per-image min-max (PNG 시각화 전용)
+
+    thresh : residual < thresh 인 애매한 픽셀(텍스처 차이·노이즈)은 0으로 floor.
+             명확한 날씨 픽셀의 잔차 강도는 보존 → exp(-alpha*H) 가 soft 하게 동작.
     """
     img_r = resize_like_notebook(img_pil)
     inp   = to_norm(img_r).unsqueeze(0).to(device)   # [-1,1]
@@ -95,6 +98,7 @@ def compute_heatmap(style_filter, net, img_pil: Image.Image, device):
     restored    = net(inp, feature_vec).clamp(0, 1)  # [0,1]
 
     residual = (orig - restored).abs().mean(dim=1).squeeze(0)   # [H,W] in [0,1]
+    residual[residual < thresh] = 0.0                          # 애매한 저잔차 픽셀 제거
     heatmap_raw = residual.cpu().numpy().astype(np.float32)
 
     h_min, h_max = heatmap_raw.min(), heatmap_raw.max()
@@ -111,6 +115,8 @@ def main():
     p.add_argument("--ckpt_backbone", required=True, help="MWFormer-real backbone 체크포인트")
     p.add_argument("--input_dir",     required=True, help="원본 이미지 폴더")
     p.add_argument("--out_dir",       default=None,  help="출력 폴더 (기본: input_dir/../heatmaps)")
+    p.add_argument("--heatmap_thresh", type=float, default=0.1,
+                   help="residual < thresh 인 애매한 픽셀을 0으로 floor (기본 0.1)")
     p.add_argument("--device",        default="cuda")
     args = p.parse_args()
 
@@ -131,7 +137,8 @@ def main():
     for fname in img_files:
         stem = os.path.splitext(fname)[0]
         img_pil = Image.open(os.path.join(args.input_dir, fname)).convert("RGB")
-        heatmap_raw, heatmap_vis = compute_heatmap(style_filter, net, img_pil, device)
+        heatmap_raw, heatmap_vis = compute_heatmap(style_filter, net, img_pil, device,
+                                                   thresh=args.heatmap_thresh)
 
         np.save(os.path.join(out_dir, stem + ".npy"), heatmap_raw)
         Image.fromarray((heatmap_vis * 255).clip(0, 255).astype(np.uint8)).save(
