@@ -753,9 +753,6 @@ def prepare_output_and_logger(args):
             unique_str = str(uuid.uuid4())
         args.model_path = os.path.join("./output/", unique_str[0:10])
 
-    # [IWAIT'26] 실행 시각(_YYMMDD_HHMMSS)을 폴더명 뒤에 붙여 재실행 시 덮어쓰기 방지
-    args.model_path = f"{args.model_path}_{datetime.now().strftime('%y%m%d_%H%M%S')}"
-
     # Set up output folder
     print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
@@ -829,6 +826,26 @@ def get_logger(path):
 
     return logger
 
+
+class Tee:
+    """stdout/stderr 를 터미널과 파일에 동시에 출력 (print·tqdm·traceback 전부 캡처)."""
+    def __init__(self, stream, file):
+        self.stream = stream
+        self.file = file
+
+    def write(self, data):
+        self.stream.write(data)
+        self.file.write(data)
+        self.file.flush()
+
+    def flush(self):
+        self.stream.flush()
+        self.file.flush()
+
+    def isatty(self):
+        return getattr(self.stream, "isatty", lambda: False)()
+
+
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
@@ -846,9 +863,19 @@ if __name__ == "__main__":
 
     
     # enable logging
-    
+
+    # [IWAIT'26] 실행 시각(_YYMMDD_HHMMSS)을 폴더명 뒤에 붙여 재실행 시 덮어쓰기 방지.
+    # __main__ 에서 한 번만 적용 → logger·결과·터미널 로그가 모두 같은 폴더 사용.
+    if args.model_path:
+        args.model_path = f"{args.model_path}_{datetime.now().strftime('%y%m%d_%H%M%S')}"
+
     model_path = args.model_path
     os.makedirs(model_path, exist_ok=True)
+
+    # 터미널 출력 전체(print·tqdm·traceback)를 terminal_log.txt 로도 저장
+    _term_log = open(os.path.join(model_path, "terminal_log.txt"), "a", buffering=1)
+    sys.stdout = Tee(sys.stdout, _term_log)
+    sys.stderr = Tee(sys.stderr, _term_log)
 
     logger = get_logger(model_path)
 
