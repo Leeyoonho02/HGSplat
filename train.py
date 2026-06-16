@@ -83,6 +83,9 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
         device=torch.device("cuda"),
         enabled=os.path.isdir(heatmap_dir),
         alpha=opt.heatmap_alpha,
+        norm=opt.heatmap_norm,
+        pct=opt.heatmap_pct,
+        floor=opt.heatmap_floor,
     )
     start_view_id = 0
     end_view_id = 1

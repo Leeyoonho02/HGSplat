@@ -172,6 +172,11 @@ class OptimizationParams(ParamGroup):
         # heatmap_dir 는 source_path/heatmaps/ 로 자동 결정되므로 별도 인자 없음
         # heatmap_alpha: W_t = exp(-alpha * H_t) 의 감쇠 계수
         self.heatmap_alpha = 5.0
+        # heatmap_norm: H 재스케일 방식 ("none" | "frame"). 진단1에서 눈 H가 ~0.01로
+        #   너무 작아 거의 안 깎이는 문제 교정. "frame" = 프레임별 robust 정규화.
+        self.heatmap_norm = "frame"
+        self.heatmap_pct = 99.0    # 정규화 분모 백분위수
+        self.heatmap_floor = 0.05  # percentile 이 이 값 미만이면 정규화 생략(노이즈 증폭 방지)
 
         super().__init__(parser, "Optimization Parameters")
 
