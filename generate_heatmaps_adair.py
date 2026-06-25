@@ -88,7 +88,7 @@ def resize_pad16(img: Image.Image) -> Image.Image:
 
 
 @torch.no_grad()
-def compute_heatmap(model, img_pil: Image.Image, device, thresh=0.1):
+def compute_heatmap(model, img_pil: Image.Image, device, thresh=0.0):
     """
     Returns
     -------
@@ -118,8 +118,10 @@ def main():
     p.add_argument("--ckpt",      required=True, help="AdaIR all-in-one(mode6) Lightning 체크포인트")
     p.add_argument("--input_dir", required=True, help="원본 이미지 폴더")
     p.add_argument("--out_dir",   default=None,  help="출력 폴더 (기본: input_dir/../heatmaps)")
-    p.add_argument("--heatmap_thresh", type=float, default=0.1,
-                   help="residual < thresh 인 애매한 픽셀을 0 으로 floor (기본 0.1)")
+    p.add_argument("--heatmap_thresh", type=float, default=0.0,
+                   help="residual < thresh 인 픽셀을 0 으로 floor. 기본 0 (floor 안 함) — "
+                        "눈 residual 이 ~0.01 로 작아 [v7] 에서 thresh 0.1 은 유해로 판명. "
+                        "스케일은 학습 시 heatmap_norm=frame 이 담당.")
     p.add_argument("--device",    default="cuda")
     args = p.parse_args()
 
