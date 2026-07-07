@@ -872,14 +872,19 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--gpu", type=str, default = '-1')
+    parser.add_argument("--no_timestamp", action="store_true",
+                        help="model_path 에 _YYMMDD_HHMMSS 접미사를 붙이지 않음 "
+                             "(run_hgsplat.py 가 타임스탬프를 직접 관리할 때 사용)")
     args = parser.parse_args(sys.argv[1:])
 
-    
+
     # enable logging
 
     # [IWAIT'26] 실행 시각(_YYMMDD_HHMMSS)을 폴더명 뒤에 붙여 재실행 시 덮어쓰기 방지.
     # __main__ 에서 한 번만 적용 → logger·결과·터미널 로그가 모두 같은 폴더 사용.
-    if args.model_path:
+    # run_hgsplat.py 는 확정 경로를 render/metrics 에도 전달해야 하므로
+    # 타임스탬프를 러너가 직접 붙이고 --no_timestamp 로 이중 부여를 막는다.
+    if args.model_path and not args.no_timestamp:
         args.model_path = f"{args.model_path}_{datetime.now().strftime('%y%m%d_%H%M%S')}"
 
     model_path = args.model_path

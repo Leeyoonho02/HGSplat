@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -71,10 +72,20 @@ def main():
     p.add_argument("--skip_restore", action="store_true")
     p.add_argument("--skip_train", action="store_true")
     p.add_argument("--skip_render", action="store_true")
+    p.add_argument("--skip_metrics", action="store_true")
+    p.add_argument("--no_timestamp", action="store_true",
+                   help="model_path 에 _YYMMDD_HHMMSS 를 붙이지 않음")
     args = p.parse_args()
 
     src = os.path.abspath(args.source_path)
     model = os.path.abspath(args.model_path)
+
+    # 타임스탬프는 러너가 직접 부여 (train.py 에는 --no_timestamp 전달).
+    # → 확정된 동일 경로가 train/render/metrics 에 모두 전달된다.
+    # --skip_train 시에는 기존 폴더를 그대로 쓰는 것이므로 붙이지 않는다.
+    if not args.skip_train and not args.no_timestamp:
+        model = f"{model}_{datetime.now().strftime('%y%m%d_%H%M%S')}"
+    print(f"[info] model_path = {model}")
     input_dir = os.path.join(src, args.images_dirname)
     cleaned_dir = os.path.join(src, args.cleaned_dirname)
     heatmap_dir = os.path.join(src, args.heatmap_dirname)
@@ -92,7 +103,7 @@ def main():
                "--heatmap_thresh", str(args.heatmap_thresh)]
         if args.force_restore:
             cmd.append("--force")
-        run_step("Step 1/3 restoration", cmd)
+        run_step("Step 1/4 restoration", cmd)
 
     # ── Step 2: train ───────────────────────────────────
     if args.skip_train:
@@ -103,6 +114,7 @@ def main():
                      "--skip_restore 를 빼거나 restoration.py 를 먼저 실행하세요.")
         cmd = [py, os.path.join(CODE_DIR, "train.py"),
                "-s", src, "-m", model,
+               "--no_timestamp",
                "--images", args.cleaned_dirname,
                "--heatmap_dir", heatmap_dir]
         if args.mode is not None:
@@ -119,7 +131,7 @@ def main():
         if args.heatmap_mv:
             cmd.append("--heatmap_mv")
         cmd += args.train_extra
-        run_step("Step 2/3 train", cmd)
+        run_step("Step 2/4 train", cmd)
 
     # ── Step 3: render ──────────────────────────────────
     if args.skip_render:
@@ -127,7 +139,14 @@ def main():
     else:
         cmd = [py, os.path.join(CODE_DIR, "render.py"),
                "-m", model, "--iteration", str(args.iteration)]
-        run_step("Step 3/3 render", cmd)
+        run_step("Step 3/4 render", cmd)
+
+    # ── Step 4: metrics ─────────────────────────────────
+    if args.skip_metrics:
+        print("[skip] Step 4 (metrics)")
+    else:
+        cmd = [py, os.path.join(CODE_DIR, "metrics.py"), "-m", model]
+        run_step("Step 4/4 metrics", cmd)
 
     print(f"\n{'='*70}\n[ALL DONE] 총 {(time.time()-t_start)/60:.1f}분  →  {model}\n{'='*70}")
 
