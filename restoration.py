@@ -17,11 +17,15 @@ restoration.py
   - residual   : [0,1] 원본 vs restored[0,1] 로 계산
   - thresh 기본 0.0  ([v7] 교훈: 눈 잔차 ~0.01 이라 0.1 floor 는 유해)
 
-기본값은 레포에 내장된 mwformer/ 패키지와 mwformer/weights/ 체크포인트를 사용하므로
-인자 없이 --input_dir 만 주면 동작한다.
+모델은 MWFormer 공식 레포(taco-group/MWFormer) 클론에서 import 한다
+(기본: code/MWFormer — 기존 Colab 워크플로우 위치. 내장 mwformer/ 패키지는
+Tdec 이식 버그가 있어 사용하지 않음).
 
 사용법:
-    python restoration.py --input_dir data/grass_snow/images
+    python restoration.py --input_dir data/grass_snow/images \
+        --mwformer_dir  /path/to/MWFormer \
+        --ckpt_style    /path/to/weights/style_filter \
+        --ckpt_backbone /path/to/weights/backbone
     # → data/grass_snow/images_cleaned/, data/grass_snow/heatmap_init/ 생성
 """
 
@@ -43,21 +47,48 @@ to_01 = ToTensor()
 
 
 def load_clean_state_dict(model, ckpt_path, device):
-    """module. prefix strip 후 strict=True 로드 (generate_heatmaps.py 와 동일)."""
+    """module. prefix strip 후 로드.
+
+    내장 mwformer 패키지는 공식 코드의 미사용 레거시 레이어(hyper attention 의
+    q/kv, convtail.conv_output)를 제거한 버전이라, 공식 체크포인트에는 모델에
+    없는 여분 키가 존재한다. → missing 키는 엄격히 검사(진짜 비호환이면 즉시
+    실패)하되, 여분(unexpected) 키만 필터링해서 로드한다.
+    """
     ckpt = torch.load(ckpt_path, map_location="cpu")
     if isinstance(ckpt, dict) and "state_dict" in ckpt:
         ckpt = ckpt["state_dict"]
     if isinstance(ckpt, dict):
         ckpt = {k.replace("module.", ""): v for k, v in ckpt.items()}
+
+    model_keys = set(model.state_dict().keys())
+    missing = sorted(model_keys - set(ckpt.keys()))
+    if missing:
+        raise RuntimeError(
+            f"체크포인트에 모델 파라미터 {len(missing)}개가 없습니다 (진짜 비호환): "
+            f"{missing[:5]}{' ...' if len(missing) > 5 else ''}")
+    extra = sorted(set(ckpt.keys()) - model_keys)
+    if extra:
+        print(f"[load] 미사용 레거시 키 {len(extra)}개 무시 (예: {extra[0]})")
+        ckpt = {k: v for k, v in ckpt.items() if k in model_keys}
+
     model.load_state_dict(ckpt, strict=True)
     return model.to(device)
 
 
-def load_models(ckpt_style, ckpt_backbone, device):
-    """내장 mwformer 패키지에서 모델 로드."""
-    if CODE_DIR not in sys.path:
-        sys.path.insert(0, CODE_DIR)
-    from mwformer import Network_top, StyleFilter_Top
+def load_models(mwformer_dir, ckpt_style, ckpt_backbone, device):
+    """MWFormer 공식 레포(taco-group/MWFormer)에서 모델 로드.
+
+    generate_heatmaps.py 와 동일한 검증된 경로. 내장 mwformer/ 패키지는
+    Tdec 이식 버그(토큰 수 불일치)가 있어 사용하지 않는다.
+    """
+    if not os.path.isdir(os.path.join(mwformer_dir, "model")):
+        raise FileNotFoundError(
+            f"MWFormer 공식 레포를 찾을 수 없습니다: {mwformer_dir}\n"
+            "git clone https://github.com/taco-group/MWFormer 후 --mwformer_dir 로 지정하세요.")
+    if mwformer_dir not in sys.path:
+        sys.path.insert(0, mwformer_dir)
+    from model.EncDec import Network_top
+    from model.style_filter64 import StyleFilter_Top
 
     net = load_clean_state_dict(Network_top(), ckpt_backbone, device).eval()
     style_filter = load_clean_state_dict(StyleFilter_Top(), ckpt_style, device).eval()
@@ -123,10 +154,12 @@ def main():
                    help="복원 이미지 출력 폴더 (기본: input_dir/../images_cleaned)")
     p.add_argument("--heatmap_dir", default=None,
                    help="heatmap 출력 폴더 (기본: input_dir/../heatmap_init)")
-    p.add_argument("--ckpt_style", default=os.path.join(CODE_DIR, "mwformer", "weights", "style_filter"),
-                   help="MWFormer-real style_filter 체크포인트 (기본: 내장 weights)")
-    p.add_argument("--ckpt_backbone", default=os.path.join(CODE_DIR, "mwformer", "weights", "backbone"),
-                   help="MWFormer-real backbone 체크포인트 (기본: 내장 weights)")
+    p.add_argument("--mwformer_dir", default=os.path.join(CODE_DIR, "MWFormer"),
+                   help="taco-group/MWFormer 공식 레포 클론 경로 (기본: code/MWFormer)")
+    p.add_argument("--ckpt_style", default=os.path.join(CODE_DIR, "MWFormer", "weights", "style_filter"),
+                   help="MWFormer-real style_filter 체크포인트")
+    p.add_argument("--ckpt_backbone", default=os.path.join(CODE_DIR, "MWFormer", "weights", "backbone"),
+                   help="MWFormer-real backbone 체크포인트")
     p.add_argument("--heatmap_thresh", type=float, default=0.0,
                    help="residual < thresh 픽셀을 0 으로 floor (기본 0.0 — [v7] 교훈)")
     p.add_argument("--force", action="store_true", help="기존 출력이 있어도 재생성")
@@ -161,7 +194,7 @@ def main():
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"[device] {device}")
-    style_filter, net = load_models(args.ckpt_style, args.ckpt_backbone, device)
+    style_filter, net = load_models(args.mwformer_dir, args.ckpt_style, args.ckpt_backbone, device)
 
     for i, fname in enumerate(todo, 1):
         stem = os.path.splitext(fname)[0]
