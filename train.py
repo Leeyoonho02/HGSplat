@@ -76,8 +76,12 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
     num_views = len(scene.getTrainCameras())
 
     # [IWAIT'26] HeatmapWeightedLoss 초기화
-    # source_path/heatmaps/ 가 존재하면 자동으로 활성화, 없으면 일반 L1 (Baseline)
-    heatmap_dir = os.path.join(dataset.source_path, "heatmaps")
+    # --heatmap_dir 지정 시 그 폴더 사용(restoration.py 파이프라인은 source_path/heatmap_init).
+    # 미지정 시 기존 동작: source_path/heatmaps/ 가 존재하면 자동 활성화, 없으면 일반 L1 (Baseline)
+    if getattr(dataset, "heatmap_dir", ""):
+        heatmap_dir = os.path.abspath(dataset.heatmap_dir)
+    else:
+        heatmap_dir = os.path.join(dataset.source_path, "heatmaps")
     heatmap_loss_fn = HeatmapWeightedLoss(
         heatmap_dir=heatmap_dir,
         device=torch.device("cuda"),
@@ -86,6 +90,10 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
         norm=opt.heatmap_norm,
         pct=opt.heatmap_pct,
         floor=opt.heatmap_floor,
+        # [v2] 멀티뷰 일관성: Refinement 루프에서만 refine_iter 가 전달되어 활성화됨
+        mv=opt.heatmap_mv,
+        mv_beta=opt.heatmap_mv_beta,
+        mv_ramp=opt.heatmap_mv_ramp if opt.heatmap_mv_ramp > 0 else opt.post_iter // 2,
     )
     start_view_id = 0
     end_view_id = 1
@@ -670,7 +678,9 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
         
         gt_image = viewpoint_cam.original_image.cuda()
         # [IWAIT'26] Refinement 루프: weather-aware weighted L1 loss
-        Ll1 = heatmap_loss_fn(image, gt_image, viewpoint_cam.image_name)
+        # [v2] refine_iter 전달 → heatmap_mv=True 면 렌더-잔차 EMA(H_multi) 블렌딩 활성화
+        Ll1 = heatmap_loss_fn(image, gt_image, viewpoint_cam.image_name,
+                              refine_iter=iteration - 30000)
 
         if FUSED_SSIM_AVAILABLE:
             ssim_loss = (1 - fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0)))

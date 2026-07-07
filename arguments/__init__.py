@@ -59,6 +59,9 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
+        # [IWAIT'26 v2] heatmap 폴더 경로. 빈 값이면 source_path/heatmaps 자동 감지(기존 동작).
+        # restoration.py 파이프라인은 source_path/heatmap_init 을 넘긴다.
+        self.heatmap_dir = ""
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
@@ -169,7 +172,7 @@ class OptimizationParams(ParamGroup):
         self.post_iter = 20000
 
         # [IWAIT'26] Weather-aware Heatmap Loss 파라미터
-        # heatmap_dir 는 source_path/heatmaps/ 로 자동 결정되므로 별도 인자 없음
+        # heatmap 폴더는 ModelParams.heatmap_dir (빈 값이면 source_path/heatmaps 자동 감지)
         # heatmap_alpha: W_t = exp(-alpha * H_t) 의 감쇠 계수
         self.heatmap_alpha = 5.0
         # heatmap_norm: H 재스케일 방식 ("none" | "frame"). 진단1에서 눈 H가 ~0.01로
@@ -177,6 +180,14 @@ class OptimizationParams(ParamGroup):
         self.heatmap_norm = "frame"
         self.heatmap_pct = 99.0    # 정규화 분모 백분위수
         self.heatmap_floor = 0.05  # percentile 이 이 값 미만이면 정규화 생략(노이즈 증폭 방지)
+
+        # [IWAIT'26 v2] 멀티뷰 일관성 신호 (Refinement 루프 한정)
+        # heatmap_mv: True 면 Refinement 에서 렌더-잔차 EMA(H_multi)를 H_init 과 블렌딩
+        # heatmap_mv_beta: 뷰별 렌더-잔차 EMA decay 계수
+        # heatmap_mv_ramp: λ 램프 길이(refine_iter 기준). 0 이면 post_iter//2 자동
+        self.heatmap_mv = False
+        self.heatmap_mv_beta = 0.9
+        self.heatmap_mv_ramp = 0
 
         super().__init__(parser, "Optimization Parameters")
 

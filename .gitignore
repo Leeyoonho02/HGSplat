@@ -16,3 +16,5 @@ diff_rasterization/dist
 tensorboard_3d
 screenshots
 *.so
+# MWFormer checkpoints (>100MB, GitHub push 불가 — Colab/Drive에서 별도 관리)
+mwformer/weights/
