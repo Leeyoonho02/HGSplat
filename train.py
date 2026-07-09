@@ -77,15 +77,19 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
 
     # [IWAIT'26] HeatmapWeightedLoss 초기화
     # --heatmap_dir 지정 시 그 폴더 사용(restoration.py 파이프라인은 source_path/heatmap_init).
+    # --heatmap_dir none 이면 명시적 비활성화(일반 L1) — source_path/heatmaps 자동 감지도 무시.
     # 미지정 시 기존 동작: source_path/heatmaps/ 가 존재하면 자동 활성화, 없으면 일반 L1 (Baseline)
-    if getattr(dataset, "heatmap_dir", ""):
+    heatmap_disabled = getattr(dataset, "heatmap_dir", "").lower() == "none"
+    if heatmap_disabled:
+        heatmap_dir = ""
+    elif getattr(dataset, "heatmap_dir", ""):
         heatmap_dir = os.path.abspath(dataset.heatmap_dir)
     else:
         heatmap_dir = os.path.join(dataset.source_path, "heatmaps")
     heatmap_loss_fn = HeatmapWeightedLoss(
         heatmap_dir=heatmap_dir,
         device=torch.device("cuda"),
-        enabled=os.path.isdir(heatmap_dir),
+        enabled=(not heatmap_disabled) and os.path.isdir(heatmap_dir),
         alpha=opt.heatmap_alpha,
         norm=opt.heatmap_norm,
         pct=opt.heatmap_pct,

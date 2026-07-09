@@ -17,6 +17,10 @@ HGSplat v2 파이프라인 원샷 러너: restoration.py → train.py → render
     python run_hgsplat.py -s data/grass_snow -m outputs/grass_v1c \
         --eval --mode custom --heatmap_alpha 20
 
+    # og_c 대조군 (cleaned 입력만, heatmap 완전 OFF — 복원 입력 효과 분리용)
+    python run_hgsplat.py -s data/grass_snow -m outputs/grass_ogc \
+        --eval --mode custom --no_heatmap
+
     # 학습만 다시 (복원 결과 재사용)
     python run_hgsplat.py -s data/grass_snow -m outputs/grass_v2b \
         --eval --mode custom --heatmap_mv --skip_restore
@@ -64,6 +68,8 @@ def main():
     p.add_argument("--heatmap_mv", action="store_true", help="[v2] Refinement 멀티뷰 일관성 활성화")
     p.add_argument("--heatmap_mv_beta", type=float, default=None)
     p.add_argument("--heatmap_mv_ramp", type=int, default=None)
+    p.add_argument("--no_heatmap", action="store_true",
+                   help="[og_c] heatmap loss 완전 OFF (cleaned 입력만 사용, 일반 L1 학습)")
     p.add_argument("--train_extra", nargs=argparse.REMAINDER, default=[],
                    help="train.py 로 그대로 전달할 추가 인자 (이 뒤의 모든 토큰)")
     # Step 3: render
@@ -109,14 +115,18 @@ def main():
     if args.skip_train:
         print("[skip] Step 2 (train)")
     else:
-        if not os.path.isdir(cleaned_dir) or not os.path.isdir(heatmap_dir):
-            sys.exit(f"[error] 복원 출력이 없습니다: {cleaned_dir} / {heatmap_dir}\n"
+        if not os.path.isdir(cleaned_dir):
+            sys.exit(f"[error] 복원 출력이 없습니다: {cleaned_dir}\n"
+                     "--skip_restore 를 빼거나 restoration.py 를 먼저 실행하세요.")
+        if not args.no_heatmap and not os.path.isdir(heatmap_dir):
+            sys.exit(f"[error] heatmap 폴더가 없습니다: {heatmap_dir}\n"
                      "--skip_restore 를 빼거나 restoration.py 를 먼저 실행하세요.")
         cmd = [py, os.path.join(CODE_DIR, "train.py"),
                "-s", src, "-m", model,
                "--no_timestamp",
                "--images", args.cleaned_dirname,
-               "--heatmap_dir", heatmap_dir]
+               # og_c: "none" 이면 train.py 가 heatmap loss 를 명시적으로 끔
+               "--heatmap_dir", "none" if args.no_heatmap else heatmap_dir]
         if args.mode is not None:
             cmd += ["--mode", args.mode]
         if args.eval:
@@ -128,7 +138,7 @@ def main():
             v = getattr(args, k)
             if v is not None:
                 cmd += [f"--{k}", str(v)]
-        if args.heatmap_mv:
+        if args.heatmap_mv and not args.no_heatmap:
             cmd.append("--heatmap_mv")
         cmd += args.train_extra
         run_step("Step 2/4 train", cmd)
