@@ -52,12 +52,21 @@ class HeatmapWeightedLoss:
         [v2] 뷰별 렌더-잔차 EMA decay 계수. ema = beta*ema + (1-beta)*|render-gt|.
     mv_ramp : int
         [v2] λ 램프 길이(refine_iter 기준). refine_iter >= mv_ramp 이면 λ=1.
+    mv_var_gate : bool
+        [v2.1] True 면 H_multi 를 렌더-잔차 '분산'으로 게이팅.
+        H_multi = m_norm * std_gate. 고평균 AND 고분산(=뷰마다 출렁이는 눈)만 억제하고,
+        고평균·저분산(=view-consistent 텍스처 미수렴)은 보존한다. (근거: road/sky 진단,
+        Experiment_v2_Result.md). 잔차 2차 모멘트 EMA 를 추가로 추적한다.
+    mv_std_floor : float
+        [v2.1] std 게이트 floor. 프레임 std percentile 이 이 값 미만(=눈 없어 아무것도
+        안 출렁이는 프레임)이면 게이트를 열지 않아 텍스처 억제를 방지. 기본 0.02.
     """
 
     def __init__(self, heatmap_dir: str, device: torch.device, enabled: bool = True, alpha: float = 5.0,
                  norm: str = "frame", pct: float = 99.0, floor: float = 0.05,
                  log_interval: int = 100,
-                 mv: bool = False, mv_beta: float = 0.9, mv_ramp: int = 10000):
+                 mv: bool = False, mv_beta: float = 0.9, mv_ramp: int = 10000,
+                 mv_var_gate: bool = False, mv_std_floor: float = 0.02):
         self.heatmap_dir = heatmap_dir
         self.device = device
         self.enabled = enabled
@@ -69,12 +78,17 @@ class HeatmapWeightedLoss:
         self.mv = mv
         self.mv_beta = mv_beta
         self.mv_ramp = mv_ramp
+        self.mv_var_gate = mv_var_gate
+        self.mv_std_floor = mv_std_floor
         # v1: 정규화된 H_single 캐시 (주의: exp 적용 전 H 를 캐싱한다.
         #     v2 블렌딩이 exp 이전 단계에서 일어나야 하기 때문)
         self._cache: dict[str, torch.Tensor] = {}                 # 원본(npy) 해상도 H
         self._cache_resized: dict[tuple, torch.Tensor] = {}       # (image_name, h, w) → H
-        # v2: 뷰별 렌더-잔차 EMA 버퍼 (렌더 해상도 [H, W])
-        self._ema: dict[str, torch.Tensor] = {}
+        # v2: 뷰별 렌더-잔차 모멘트 EMA 버퍼.
+        #   var_gate off: value = mean EMA 텐서 [H, W]
+        #   var_gate on : value = [mean EMA, sq(2차모멘트) EMA] 리스트
+        self._ema: dict = {}
+        self._last_gate_mean = None   # 로깅용
         self._call_count = 0
 
         if enabled and not os.path.isdir(heatmap_dir):
@@ -127,15 +141,39 @@ class HeatmapWeightedLoss:
         """[v2] 뷰별 렌더-잔차 EMA 갱신 후 정규화된 H_multi 반환.
 
         diff : [C, H, W] = |render - gt| (grad 차단해서 사용)
+
+        var_gate off: H_multi = frame_norm(mean_EMA)            (기존 v2)
+        var_gate on : H_multi = frame_norm(mean_EMA) * std_gate  (v2.1)
+          std_gate = clip(std / max(percentile(std,pct), std_floor), 0, 1)
+          → 고평균 AND 고분산(눈)만 억제, 고평균·저분산(텍스처)은 보존.
         """
         r = diff.detach().mean(dim=0)  # [H, W]
-        ema = self._ema.get(image_name)
-        if ema is None or ema.shape != r.shape:
-            # cold start (또는 해상도 변경 시 리셋)
-            self._ema[image_name] = r.clone()
+        b = self.mv_beta
+
+        if not self.mv_var_gate:
+            ema = self._ema.get(image_name)
+            if not isinstance(ema, torch.Tensor) or ema.shape != r.shape:
+                self._ema[image_name] = r.clone()
+            else:
+                ema.mul_(b).add_(r, alpha=1.0 - b)
+            return self._frame_norm(self._ema[image_name])
+
+        # var_gate on: 1차/2차 모멘트 EMA 동시 추적
+        st = self._ema.get(image_name)
+        if not isinstance(st, list) or st[0].shape != r.shape:
+            self._ema[image_name] = [r.clone(), (r * r).clone()]
         else:
-            ema.mul_(self.mv_beta).add_(r, alpha=1.0 - self.mv_beta)
-        return self._frame_norm(self._ema[image_name])
+            st[0].mul_(b).add_(r, alpha=1.0 - b)          # E[r]
+            st[1].mul_(b).add_(r * r, alpha=1.0 - b)      # E[r^2]
+        m, sq = self._ema[image_name]
+
+        m_norm = self._frame_norm(m)
+        std = torch.sqrt(torch.clamp(sq - m * m, min=0.0))
+        p = torch.quantile(std, self.pct / 100.0)
+        scale = torch.clamp(p, min=self.mv_std_floor)
+        gate = torch.clamp(std / scale, 0.0, 1.0)
+        self._last_gate_mean = gate.mean().item()
+        return m_norm * gate
 
     # ──────────────────────────────────
     # 퍼블릭 API
@@ -199,6 +237,8 @@ class HeatmapWeightedLoss:
             plain = diff.mean().item()
             mode = "OURS-v2" if lam is not None else "OURS"
             extra = f"  lambda={lam:.3f}" if lam is not None else ""
+            if lam is not None and self.mv_var_gate and self._last_gate_mean is not None:
+                extra += f"  gate_mean={self._last_gate_mean:.3f}"
             print(f"[HeatmapLoss iter={self._call_count}] mode={mode}  "
                   f"L1_weighted={weighted_loss.item():.6f}  L1_plain={plain:.6f}  "
                   f"weight_mean={weight.mean().item():.4f}  weight_min={weight.min().item():.4f}{extra}")

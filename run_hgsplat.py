@@ -68,6 +68,9 @@ def main():
     p.add_argument("--heatmap_mv", action="store_true", help="[v2] Refinement 멀티뷰 일관성 활성화")
     p.add_argument("--heatmap_mv_beta", type=float, default=None)
     p.add_argument("--heatmap_mv_ramp", type=int, default=None)
+    p.add_argument("--heatmap_mv_var", action="store_true",
+                   help="[v2.1] H_multi 분산 게이트(고평균·고분산=눈만 억제, 텍스처 보존)")
+    p.add_argument("--heatmap_mv_std_floor", type=float, default=None)
     p.add_argument("--no_heatmap", action="store_true",
                    help="[og_c] heatmap loss 완전 OFF (cleaned 입력만 사용, 일반 L1 학습)")
     p.add_argument("--train_extra", nargs=argparse.REMAINDER, default=[],
@@ -134,12 +137,15 @@ def main():
         if args.resolution is not None:
             cmd += ["--resolution", str(args.resolution)]
         for k in ("heatmap_alpha", "heatmap_norm", "heatmap_pct",
-                  "heatmap_floor", "heatmap_mv_beta", "heatmap_mv_ramp"):
+                  "heatmap_floor", "heatmap_mv_beta", "heatmap_mv_ramp",
+                  "heatmap_mv_std_floor"):
             v = getattr(args, k)
             if v is not None:
                 cmd += [f"--{k}", str(v)]
         if args.heatmap_mv and not args.no_heatmap:
             cmd.append("--heatmap_mv")
+        if args.heatmap_mv_var and not args.no_heatmap:
+            cmd.append("--heatmap_mv_var")
         cmd += args.train_extra
         run_step("Step 2/4 train", cmd)
 

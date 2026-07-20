@@ -98,6 +98,9 @@ def training(dataset, opt, pipe, dataset_name, debug_from, logger=None):
         mv=opt.heatmap_mv,
         mv_beta=opt.heatmap_mv_beta,
         mv_ramp=opt.heatmap_mv_ramp if opt.heatmap_mv_ramp > 0 else opt.post_iter // 2,
+        # [v2.1] 분산 게이트
+        mv_var_gate=opt.heatmap_mv_var,
+        mv_std_floor=opt.heatmap_mv_std_floor,
     )
     start_view_id = 0
     end_view_id = 1

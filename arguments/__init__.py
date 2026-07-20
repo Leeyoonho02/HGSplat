@@ -188,6 +188,9 @@ class OptimizationParams(ParamGroup):
         self.heatmap_mv = False
         self.heatmap_mv_beta = 0.9
         self.heatmap_mv_ramp = 0
+        # [v2.1] 분산 게이트: H_multi 를 렌더-잔차 분산으로 게이팅(고평균·고분산=눈만 억제).
+        self.heatmap_mv_var = False
+        self.heatmap_mv_std_floor = 0.02
 
         super().__init__(parser, "Optimization Parameters")
 
