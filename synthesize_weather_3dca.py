@@ -37,12 +37,12 @@ SNOW_ANGLE = -8    # 고정 눈송이 방향
 class ImageAddSnow:
     def __init__(self, seed):
         self.seq = iaa.Snowflakes(
-            density=(0.2, 0.3),              # imgaug 기본값
-            density_uniformity=(0.8, 0.8),
-            flake_size=(0.7, 0.9),
-            flake_size_uniformity=(0.7, 0.9),
-            angle=(SNOW_ANGLE - 1, SNOW_ANGLE + 1),  # 방향만 고정
-            speed=(0.007, 0.03),
+            density=0.1,
+            density_uniformity=0.95,
+            flake_size=0.8,
+            flake_size_uniformity=0.7,
+            angle=SNOW_ANGLE,
+            speed=0.015,
             seed=seed,
         )
 
@@ -53,13 +53,13 @@ class ImageAddSnow:
 class ImageAddRain:
     def __init__(self, seed):
         self.seq = iaa.RainLayer(
-            density=(0.10, 0.15),                # 3D_Corruptions_AD severity=3 기본값
-            density_uniformity=(0.8, 1.0),
-            drop_size=(0.85, 1.0),
-            drop_size_uniformity=(0.8, 0.9),
-            angle=(RAIN_ANGLE - 1, RAIN_ANGLE + 1),  # 방향만 고정
-            speed=(0.04, 0.20),
-            blur_sigma_fraction=(0.0001, 0.001),
+            density=0.07,
+            density_uniformity=0.9,
+            drop_size=0.9,
+            drop_size_uniformity=0.7,
+            angle=RAIN_ANGLE,
+            speed=0.20,
+            blur_sigma_fraction=0.0005,
             blur_sigma_limits=(0.5, 3.75),
             seed=seed,
         )
