@@ -878,6 +878,8 @@ if __name__ == "__main__":
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[30_000])
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Random seed for a repeated experiment (default: 0).")
     parser.add_argument("--gpu", type=str, default = '-1')
     parser.add_argument("--no_timestamp", action="store_true",
                         help="model_path 에 _YYMMDD_HHMMSS 접미사를 붙이지 않음 "
@@ -917,7 +919,7 @@ if __name__ == "__main__":
     logger.info("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
-    safe_state(args.quiet)
+    safe_state(args.quiet, args.seed)
 
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)

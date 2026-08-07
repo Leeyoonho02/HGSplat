@@ -1,10 +1,10 @@
-# HGSplat: Weather-Aware Heatmap-Weighted Unposed 3D Gaussian Splatting
+# GSplat: Weather-Aware Heatmap-Weighted 3D Gaussian Splatting from Unposed Videos
 
 LongSplat 기반의 **unposed 3D Gaussian Splatting(3DGS)** 연구 코드입니다. 이 프로젝트는 날씨 제거 모델을 새로 제안하는 것이 아니라, **불완전한 2D 날씨 복원이 선행된 영상으로부터 3D 장면을 재구성할 때 그 복원 결과를 얼마나 신뢰할지 조절하는 방법**을 다룹니다.
 
 현재 주 실험 대상은 눈이 포함된 casual video이며, MWFormer가 처리 가능한 비 입력으로의 확장은 후속 과제입니다.
 
-> 연구 프레이밍: *2D restoration의 한계에 대응하는 unposed 3DGS loss 개선*
+> 연구 프레이밍: _2D restoration의 한계에 대응하는 unposed 3DGS loss 개선_
 
 ---
 
@@ -31,12 +31,12 @@ MWFormer 같은 2D restoration 모델로 눈/비를 줄일 수 있지만, 복원
 
 ## 입력 → 방법 → 출력
 
-| 단계 | 입력 | HGSplat 처리 | 산출물 |
-|---|---|---|---|
-| 1. 사전 복원 | weather-corrupted unposed frames `images/` | 고정된 MWFormer로 frame별 복원 | `images_cleaned/` |
-| 2. 초기 불확실성 | 원본 $I^{weather}$, 복원본 $I^{clean}$ | 두 이미지 차이로 복원 모델이 크게 바꾼 영역을 $H^{init}$로 표현 | `heatmap_init/*.npy` |
-| 3. Unposed reconstruction | cleaned frames, $H^{init}$ | LongSplat이 pose와 Gaussian scene을 공동 최적화. pixel별 weighted photometric L1 적용 | 학습된 Gaussian representation 및 camera pose |
-| 4. 동적 신뢰도 보정 | Refinement 중 render residual | view별 residual EMA와 분산 gate로 $H^{dyn}$을 만들고 $H^{init}$과 점진적으로 결합 | 최종 render, novel-view images, PSNR/SSIM/LPIPS |
+| 단계                      | 입력                                       | HGSplat 처리                                                                          | 산출물                                          |
+| ------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| 1. 사전 복원              | weather-corrupted unposed frames `images/` | 고정된 MWFormer로 frame별 복원                                                        | `images_cleaned/`                               |
+| 2. 초기 불확실성          | 원본 $I^{weather}$, 복원본 $I^{clean}$     | 두 이미지 차이로 복원 모델이 크게 바꾼 영역을 $H^{init}$로 표현                       | `heatmap_init/*.npy`                            |
+| 3. Unposed reconstruction | cleaned frames, $H^{init}$                 | LongSplat이 pose와 Gaussian scene을 공동 최적화. pixel별 weighted photometric L1 적용 | 학습된 Gaussian representation 및 camera pose   |
+| 4. 동적 신뢰도 보정       | Refinement 중 render residual              | view별 residual EMA와 분산 gate로 $H^{dyn}$을 만들고 $H^{init}$과 점진적으로 결합     | 최종 render, novel-view images, PSNR/SSIM/LPIPS |
 
 최종 출력물은 날씨가 덜 포함된 3D Gaussian scene, 해당 scene의 novel-view render, 그리고 unposed 입력에서 추정된 camera pose입니다. 현재 코드는 `render.py`, `metrics.py`를 통해 render와 image-quality metric을 생성합니다. **Pose 품질 평가는 별도 후속 검증 항목**입니다.
 
@@ -91,13 +91,13 @@ $$
 
 ## 실험 구분
 
-| Run | LongSplat 입력 | Heatmap | 확인하려는 것 |
-|---|---|---|---|
-| `og` | 원본 weather frames | 없음 | 원본 LongSplat baseline |
-| `og_c` | `images_cleaned` | 없음 | 2D 복원 입력 자체의 기여 |
-| `v1` | `images_cleaned` | $H^{init}$ | 초기 복원 불확실성의 효과 |
-| `v2` | `images_cleaned` | $H^{init}$ + residual EMA | 동적 residual 평균의 효과 |
-| `v3` | `images_cleaned` | v2 + variance gate | 불안정한 residual의 과도한 억제 완화 |
+| Run    | LongSplat 입력      | Heatmap                   | 확인하려는 것                        |
+| ------ | ------------------- | ------------------------- | ------------------------------------ |
+| `og`   | 원본 weather frames | 없음                      | 원본 LongSplat baseline              |
+| `og_c` | `images_cleaned`    | 없음                      | 2D 복원 입력 자체의 기여             |
+| `v1`   | `images_cleaned`    | $H^{init}$                | 초기 복원 불확실성의 효과            |
+| `v2`   | `images_cleaned`    | $H^{init}$ + residual EMA | 동적 residual 평균의 효과            |
+| `v3`   | `images_cleaned`    | v2 + variance gate        | 불안정한 residual의 과도한 억제 완화 |
 
 현재 기본 설정은 v3, `alpha=30`, percentile 99, heatmap floor 0.05, EMA beta 0.9, residual-std floor 0.02, ramp 10,000입니다. 최신 정량 결과와 한계는 [`../docs/v3_experiment_result.md`](../docs/v3_experiment_result.md), 방법의 전체 정의는 [`../docs/v3_method.md`](../docs/v3_method.md)를 참고하세요.
 

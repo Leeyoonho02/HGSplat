@@ -60,6 +60,8 @@ def main():
     # Step 2: train (자주 쓰는 것만 노출, 나머지는 --train_extra 로)
     p.add_argument("--mode", default=None, help="train.py --mode (예: custom, free)")
     p.add_argument("--eval", action="store_true")
+    p.add_argument("--seed", type=int, default=0,
+                   help="train.py random seed (repeat runs should use distinct seeds)")
     p.add_argument("--resolution", type=int, default=None)
     p.add_argument("--heatmap_alpha", type=float, default=None)
     p.add_argument("--heatmap_norm", default=None)
@@ -127,6 +129,7 @@ def main():
         cmd = [py, os.path.join(CODE_DIR, "train.py"),
                "-s", src, "-m", model,
                "--no_timestamp",
+               "--seed", str(args.seed),
                "--images", args.cleaned_dirname,
                # og_c: "none" 이면 train.py 가 heatmap loss 를 명시적으로 끔
                "--heatmap_dir", "none" if args.no_heatmap else heatmap_dir]
